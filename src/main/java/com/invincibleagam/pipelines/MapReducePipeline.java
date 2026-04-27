@@ -61,8 +61,10 @@ public class MapReducePipeline {
                     if (parsed == null) {
                         malformedCount++;
                     } else {
-                        writer.write(parsed.host + "\t" + parsed.timestamp + "\t" + parsed.logDate + "\t" +
-                                parsed.logHour + "\t" + parsed.httpMethod + "\t" + parsed.resourcePath + "\t" +
+                        String safeHost = parsed.host.replace("\t", " ");
+                        String safeResource = parsed.resourcePath.replace("\t", " ");
+                        writer.write(safeHost + "\t" + parsed.timestamp + "\t" + parsed.logDate + "\t" +
+                                parsed.logHour + "\t" + parsed.httpMethod + "\t" + safeResource + "\t" +
                                 parsed.protocolVersion + "\t" + parsed.statusCode + "\t" + parsed.bytesTransferred + "\n");
                     }
                 }

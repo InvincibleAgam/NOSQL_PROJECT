@@ -31,7 +31,7 @@ public class LogParser {
             int logHour = dateTime.getHour();
 
             // Parse request "GET /path HTTP/1.0"
-            String[] reqParts = request.split(" ");
+            String[] reqParts = request.split("\\s+");
             String httpMethod = reqParts.length > 0 ? reqParts[0] : "";
             String resourcePath = reqParts.length > 1 ? reqParts[1] : "";
             String protocolVersion = reqParts.length > 2 ? reqParts[2] : "";
