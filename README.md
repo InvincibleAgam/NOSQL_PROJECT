@@ -1,1 +1,95 @@
-# NOSQL_PROJECT
+# NASA HTTP Log Analysis — Phase 1
+
+This repository contains the Phase 1 deliverables for the DAS 839 NoSQL Systems End-Term Project.
+
+## Overview
+Phase 1 focuses on designing the overall system architecture, defining the shared parsing and ETL workflows, building the reporting schema, and demonstrating a working prototype using two pipelines:
+1. **MongoDB Pipeline**
+2. **MapReduce Pipeline**
+
+Both pipelines process two months of NASA HTTP access logs (July & August 1995, ~3.46M records) and produce mathematically identical results for the three mandatory queries.
+
+## 1. System Architecture
+
+The system uses a unified controller (`main.py`) that routes execution to specific database pipelines while utilizing shared parser, batching, and reporting components.
+
+```
+┌─────────────────────────────────────────────────┐
+│                  CLI Controller                  │
+│         (main.py — pipeline selector)            │
+└──────────┬───────────────┬──────────────────────┘
+           │               │
+     ┌─────▼─────┐   ┌────▼──────┐   ┌──────────┐  ┌──────────┐
+     │  MongoDB   │   │ MapReduce │   │   Pig    │  │   Hive   │
+     │  Pipeline  │   │ Pipeline  │   │(Phase 2) │  │(Phase 2) │
+     └─────┬──────┘   └────┬──────┘   └──────────┘  └──────────┘
+           │               │
+     ┌─────▼───────────────▼──────┐
+     │     Shared Parser Module    │
+     │  (parser.py — regex-based)  │
+     └─────────────┬──────────────┘
+                   │
+     ┌─────────────▼──────────────┐
+     │    MySQL Result Loader      │
+     │  (loader.py — 3 tables)     │
+     └─────────────┬──────────────┘
+                   │
+     ┌─────────────▼──────────────┐
+     │    Reporting Module         │
+     │  (reporter.py — reads MySQL)│
+     └────────────────────────────┘
+```
+
+## 2. Parsing Strategy
+
+The shared parsing logic is located in `src/parser.py`. It uses a rigorous regex pattern:
+`^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d{3})\s+(\S+)$`
+
+This extracts all required fields: `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, and `bytes_transferred`.
+- `bytes_transferred` is explicitly checked for `-` and defaulted to `0`.
+
+**Malformed Records**: 
+If a line fails to match the strict regex format, or if its timestamp cannot be parsed, the parser intentionally returns `None`. The orchestrating pipelines increment a `malformed_count` tracker, ensuring no data is silently dropped. In our run over 3,461,613 records, exactly **33 lines** were flagged as malformed.
+
+## 3. ETL Workflow
+
+1. **Extract**: `src/batch_processor.py` streams log files, natively decompressing `.gz` files and yielding log lines to the chosen pipeline.
+2. **Transform**: The data is parsed via the unified parser.
+3. **Aggregate**: The chosen pipeline (MongoDB/MapReduce) computes the three queries.
+4. **Load**: `src/loader.py` writes the aggregated results and pipeline metadata to the shared MySQL database.
+
+## 4. Batching Approach
+
+Batches are streamed dynamically from the files without loading the entire dataset into memory. 
+- The default batch size is **10,000**.
+- Batch sizes, batch count, and average batch size (`total_records / num_batches`) are computed at the end of the run and saved to the `run_metadata` table.
+
+## 5. Relational Reporting Database Schema
+
+The results are stored in MySQL across four tables:
+- `query1_results`: `log_date`, `status_code`, `request_count`, `total_bytes`
+- `query2_results`: `resource_path`, `request_count`, `total_bytes`, `distinct_host_count`
+- `query3_results`: `log_date`, `log_hour`, `error_request_count`, `total_request_count`, `error_rate`, `distinct_error_hosts`
+- `run_metadata`: Tracking run-level stats across pipelines.
+
+*Every query table explicitly stores `pipeline_name`, `run_id`, `batch_id`, and `execution_time` for transparent cross-comparison.*
+
+## 6. Pipeline Equivalence Plan
+
+Equivalence is strictly enforced through standardizing all transformations BEFORE the data hits the database engines:
+1. **Shared Parser**: Both MongoDB and MapReduce use the exact same `src/parser.py`.
+2. **Consistent Logic**: Query parameters are mapped directly to identical conditions (e.g. MongoDB `$cond` vs Java explicit if-statements).
+3. **Execution Technology**: The MapReduce pipeline uses native Java (`NASALogDriver.java`) compiled and executed via `hadoop jar`, guaranteeing the core data processing happens genuinely in Hadoop.
+4. **Verification**: A strict comparison between the output logs generated by both pipelines over 3.46 Million rows yields 100% equivalence down to the byte.
+
+## Running the Demo
+
+Make sure Docker is running. The tool automatically sets up MySQL on port 3307 and MongoDB on port 27017.
+
+```bash
+# 1. Download NASA dataset (if not already downloaded)
+bash scripts/download_data.sh
+
+# 2. Run the interactive CLI to execute the pipeline or view reports
+python3 main.py
+```
