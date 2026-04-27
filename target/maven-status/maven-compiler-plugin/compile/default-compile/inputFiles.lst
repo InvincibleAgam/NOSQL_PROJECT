@@ -1,0 +1,9 @@
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/core/Config.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/pipelines/NASALogDriver.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/core/DatabaseManager.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/core/LogParser.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/Main.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/pipelines/MapReducePipeline.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/models/ParsedLog.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/core/BatchProcessor.java
+/Users/agammanashroy/Desktop/NOSQL_Project/src/main/java/com/invincibleagam/pipelines/MongoPipeline.java

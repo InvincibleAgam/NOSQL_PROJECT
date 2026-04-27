@@ -1,22 +1,22 @@
-# NASA HTTP Log Analysis — Phase 1
+# NASA HTTP Log Analysis — Phase 1 (Java Migration Complete)
 
-This repository contains the Phase 1 deliverables for the DAS 839 NoSQL Systems End-Term Project.
+This repository contains the Phase 1 deliverables for the DAS 839 NoSQL Systems End-Term Project. The entire architecture has been migrated to a pure **Java Maven Project**.
 
 ## Overview
-Phase 1 focuses on designing the overall system architecture, defining the shared parsing and ETL workflows, building the reporting schema, and demonstrating a working prototype using two pipelines:
-1. **MongoDB Pipeline**
-2. **MapReduce Pipeline**
+Phase 1 focuses on designing the overall system architecture, defining the shared parsing and ETL workflows, building the reporting schema, and demonstrating a working prototype using two pipelines natively in Java:
+1. **MongoDB Pipeline** (using Java MongoDB Driver Sync)
+2. **MapReduce Pipeline** (using native Hadoop Java API)
 
 Both pipelines process two months of NASA HTTP access logs (July & August 1995, ~3.46M records) and produce mathematically identical results for the three mandatory queries.
 
 ## 1. System Architecture
 
-The system uses a unified controller (`main.py`) that routes execution to specific database pipelines while utilizing shared parser, batching, and reporting components.
+The system uses a unified Java controller (`Main.java`) that routes execution to specific database pipelines while utilizing shared Java parsers, batching streams, and reporting components.
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                  CLI Controller                  │
-│         (main.py — pipeline selector)            │
+│              Java CLI Controller                 │
+│         (Main.java — pipeline selector)          │
 └──────────┬───────────────┬──────────────────────┘
            │               │
      ┌─────▼─────┐   ┌────▼──────┐   ┌──────────┐  ┌──────────┐
@@ -26,41 +26,40 @@ The system uses a unified controller (`main.py`) that routes execution to specif
            │               │
      ┌─────▼───────────────▼──────┐
      │     Shared Parser Module    │
-     │  (parser.py — regex-based)  │
+     │  (LogParser.java — regex)   │
      └─────────────┬──────────────┘
                    │
      ┌─────────────▼──────────────┐
-     │    MySQL Result Loader      │
-     │  (loader.py — 3 tables)     │
+     │    MySQL JDBC Loader        │
+     │(DatabaseManager.java)       │
      └─────────────┬──────────────┘
                    │
      ┌─────────────▼──────────────┐
      │    Reporting Module         │
-     │  (reporter.py — reads MySQL)│
+     │(DatabaseManager.java)       │
      └────────────────────────────┘
 ```
 
 ## 2. Parsing Strategy
 
-The shared parsing logic is located in `src/parser.py`. It uses a rigorous regex pattern:
+The shared parsing logic is located in `LogParser.java`. It uses a rigorous `java.util.regex` pattern:
 `^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d{3})\s+(\S+)$`
 
-This extracts all required fields: `host`, `timestamp`, `log_date`, `log_hour`, `http_method`, `resource_path`, `protocol_version`, `status_code`, and `bytes_transferred`.
-- `bytes_transferred` is explicitly checked for `-` and defaulted to `0`.
+This extracts all required fields. `bytes_transferred` is explicitly checked for `-` and defaulted to `0`.
 
 **Malformed Records**: 
-If a line fails to match the strict regex format, or if its timestamp cannot be parsed, the parser intentionally returns `None`. The orchestrating pipelines increment a `malformed_count` tracker, ensuring no data is silently dropped. In our run over 3,461,613 records, exactly **33 lines** were flagged as malformed.
+If a line fails to match the strict regex format, or if its timestamp cannot be parsed, the parser intentionally returns `null`. The orchestrating pipelines increment a `malformed_count` tracker, ensuring no data is silently dropped. In our run over 3,461,613 records, exactly **33 lines** were flagged as malformed.
 
 ## 3. ETL Workflow
 
-1. **Extract**: `src/batch_processor.py` streams log files, natively decompressing `.gz` files and yielding log lines to the chosen pipeline.
-2. **Transform**: The data is parsed via the unified parser.
+1. **Extract**: `BatchProcessor.java` streams log files, natively decoding GZIP and yielding log lines to the chosen pipeline.
+2. **Transform**: The data is parsed via the unified Java parser into POJOs.
 3. **Aggregate**: The chosen pipeline (MongoDB/MapReduce) computes the three queries.
-4. **Load**: `src/loader.py` writes the aggregated results and pipeline metadata to the shared MySQL database.
+4. **Load**: `DatabaseManager.java` writes the aggregated results and pipeline metadata to the shared MySQL database via JDBC.
 
 ## 4. Batching Approach
 
-Batches are streamed dynamically from the files without loading the entire dataset into memory. 
+Batches are streamed dynamically using a custom Java Iterator (`BatchProcessor`) without loading the entire dataset into memory. 
 - The default batch size is **10,000**.
 - Batch sizes, batch count, and average batch size (`total_records / num_batches`) are computed at the end of the run and saved to the `run_metadata` table.
 
@@ -72,24 +71,24 @@ The results are stored in MySQL across four tables:
 - `query3_results`: `log_date`, `log_hour`, `error_request_count`, `total_request_count`, `error_rate`, `distinct_error_hosts`
 - `run_metadata`: Tracking run-level stats across pipelines.
 
-*Every query table explicitly stores `pipeline_name`, `run_id`, `batch_id`, and `execution_time` for transparent cross-comparison.*
-
 ## 6. Pipeline Equivalence Plan
 
 Equivalence is strictly enforced through standardizing all transformations BEFORE the data hits the database engines:
-1. **Shared Parser**: Both MongoDB and MapReduce use the exact same `src/parser.py`.
-2. **Consistent Logic**: Query parameters are mapped directly to identical conditions (e.g. MongoDB `$cond` vs Java explicit if-statements).
-3. **Execution Technology**: The MapReduce pipeline uses native Java (`NASALogDriver.java`) compiled and executed via `hadoop jar`, guaranteeing the core data processing happens genuinely in Hadoop.
-4. **Verification**: A strict comparison between the output logs generated by both pipelines over 3.46 Million rows yields 100% equivalence down to the byte.
+1. **Shared Parser**: Both MongoDB and MapReduce use the exact same `LogParser.java`.
+2. **Execution Technology**: The MapReduce pipeline uses native Java (`NASALogDriver.java`) executed via Hadoop, guaranteeing the core data processing happens genuinely in Hadoop.
+3. **Verification**: A strict comparison between the output logs generated by both pipelines over 3.46 Million rows yields 100% equivalence down to the byte.
 
 ## Running the Demo
 
-Make sure Docker is running. The tool automatically sets up MySQL on port 3307 and MongoDB on port 27017.
+Make sure Docker is running (for MySQL on 3307 and MongoDB on 27017).
 
 ```bash
 # 1. Download NASA dataset (if not already downloaded)
 bash scripts/download_data.sh
 
-# 2. Run the interactive CLI to execute the pipeline or view reports
-python3 main.py
+# 2. Build the Maven Project
+mvn clean package
+
+# 3. Run the interactive Java CLI
+java -cp target/nosql-project-1.0-SNAPSHOT-jar-with-dependencies.jar com.invincibleagam.Main
 ```
