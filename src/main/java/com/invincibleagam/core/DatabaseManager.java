@@ -81,7 +81,9 @@ public class DatabaseManager {
     public static void loadRunMetadata(String runId, String pipelineName, int batchSize, int totalRecords,
                                        int malformedRecords, int numBatches, float avgBatchSize,
                                        float runtimeSeconds, String startedAt, String completedAt) {
-        String sql = "INSERT INTO run_metadata VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+        String sql = "INSERT INTO run_metadata (run_id, pipeline_name, batch_size, total_records, " +
+                     "malformed_records, num_batches, avg_batch_size, runtime_seconds, started_at, completed_at) " +
+                     "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
         try (Connection conn = getConnection(true); PreparedStatement ps = conn.prepareStatement(sql)) {
             ps.setString(1, runId);
             ps.setString(2, pipelineName);

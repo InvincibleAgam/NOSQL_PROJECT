@@ -206,15 +206,8 @@ public class MapReducePipeline {
             "hadoop", "jar", "target/nosql-project-1.0-SNAPSHOT-jar-with-dependencies.jar",
             "com.invincibleagam.pipelines.NASALogDriver", queryId, inPath, outPath
         );
-        pb.redirectErrorStream(true);
+        pb.inheritIO();
         Process p = pb.start();
-        
-        try (BufferedReader br = new BufferedReader(new java.io.InputStreamReader(p.getInputStream()))) {
-            String line;
-            while ((line = br.readLine()) != null) {
-                // System.out.println(line); // uncomment to debug hadoop output
-            }
-        }
         
         int exitCode = p.waitFor();
         if (exitCode != 0) {
