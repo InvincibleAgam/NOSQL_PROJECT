@@ -1,0 +1,22 @@
+# Data files and Hadoop outputs
+data/
+*.log
+*.gz
+
+# Python caches
+__pycache__/
+*.pyc
+*.pyo
+
+# Java compiled files
+*.class
+*.jar
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+
+# Virtual environments
+venv/
+env/
