@@ -82,14 +82,6 @@ Equivalence is strictly enforced through standardizing all transformations BEFOR
 
 Make sure Docker is running (for MySQL on 3307 and MongoDB on 27017).
 
-### Automated Execution (Recommended)
-You can download the data, compile the Java code, and execute both pipelines sequentially by running:
-```bash
-bash scripts/run_all.sh
-```
-
-### Manual Execution
-If you prefer to run things step-by-step:
 ```bash
 # 1. Download NASA dataset (if not already downloaded)
 bash scripts/download_data.sh

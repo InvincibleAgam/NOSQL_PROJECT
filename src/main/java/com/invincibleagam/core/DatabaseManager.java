@@ -141,6 +141,41 @@ public class DatabaseManager {
                 }
             }
 
+            // Print Q2
+            System.out.println("\n────────────────────────────────────────────────────────────────────────────────");
+            System.out.println("  📋  QUERY 2 — Top 20 Requested Resources");
+            System.out.println("────────────────────────────────────────────────────────────────────────────────");
+            String q2Sql = "SELECT resource_path, request_count, total_bytes, distinct_host_count FROM query2_results WHERE run_id = ? ORDER BY request_count DESC LIMIT 20";
+            try (PreparedStatement ps = conn.prepareStatement(q2Sql)) {
+                ps.setString(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        String path = rs.getString("resource_path");
+                        if (path.length() > 47) path = path.substring(0, 44) + "...";
+                        System.out.printf("  │ %-47s │ %-13d │ %-13d │ %-19d │%n",
+                                path, rs.getInt("request_count"),
+                                rs.getLong("total_bytes"), rs.getInt("distinct_host_count"));
+                    }
+                }
+            }
+
+            // Print Q3
+            System.out.println("\n────────────────────────────────────────────────────────────────────────────────");
+            System.out.println("  📋  QUERY 3 — Hourly Error Analysis");
+            System.out.println("────────────────────────────────────────────────────────────────────────────────");
+            String q3Sql = "SELECT log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts FROM query3_results WHERE run_id = ? LIMIT 20";
+            try (PreparedStatement ps = conn.prepareStatement(q3Sql)) {
+                ps.setString(1, runId);
+                try (ResultSet rs = ps.executeQuery()) {
+                    while (rs.next()) {
+                        System.out.printf("  │ %-12s │ %-8d │ %-11d │ %-11d │ %-10.4f │ %-14d │%n",
+                                rs.getString("log_date"), rs.getInt("log_hour"),
+                                rs.getInt("error_request_count"), rs.getInt("total_request_count"),
+                                rs.getFloat("error_rate"), rs.getInt("distinct_error_hosts"));
+                    }
+                }
+            }
+
         } catch (Exception e) {
             e.printStackTrace();
         }
