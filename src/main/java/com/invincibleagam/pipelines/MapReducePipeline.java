@@ -1,9 +1,10 @@
 package com.invincibleagam.pipelines;
 
-import com.invincibleagam.core.BatchProcessor;
+import com.invincibleagam.core.BatchStrategy;
 import com.invincibleagam.core.Config;
 import com.invincibleagam.core.DatabaseManager;
 import com.invincibleagam.core.LogParser;
+import com.invincibleagam.core.LogicalBatchProcessor;
 import com.invincibleagam.models.ParsedLog;
 
 import java.io.BufferedReader;
@@ -19,15 +20,26 @@ import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
+import java.util.Map;
+import java.util.Set;
 import java.util.UUID;
 
 public class MapReducePipeline {
 
-    public static String runPipeline(List<String> filepaths, int batchSize) {
+    /**
+     * @param filepaths       log file paths
+     * @param batchSize       fixed batch size (used only when strategy == FIXED)
+     * @param strategy        batching strategy (FIXED, MONTHLY, WEEKLY)
+     * @param selectedQueries set of queries to run, e.g. {"q1","q2","q3"}
+     */
+    public static String runPipeline(List<String> filepaths, int batchSize,
+                                      BatchStrategy strategy, Set<String> selectedQueries) {
         String runId = "mr_" + UUID.randomUUID().toString().substring(0, 8);
         String pipelineName = "mapreduce";
         System.out.println("\n======================================================================");
         System.out.println("  🗺️  MapReduce Pipeline (Java) — Run ID: " + runId);
+        System.out.println("      Batch Strategy: " + strategy.getLabel());
+        System.out.println("      Queries: " + selectedQueries);
         System.out.println("======================================================================");
 
         DatabaseManager.createDatabaseAndTables();
@@ -49,18 +61,26 @@ public class MapReducePipeline {
         int numBatches = 0;
         int lastBatchId = 0;
 
-        BatchProcessor processor = new BatchProcessor(filepaths, batchSize);
+        LogicalBatchProcessor processor = new LogicalBatchProcessor(filepaths, strategy, batchSize);
         try (BufferedWriter writer = new BufferedWriter(new FileWriter(new File(inputDir, "mr_input.tsv")))) {
-            for (List<String> batchLines : processor) {
+            for (Map.Entry<String, List<String>> entry : processor) {
                 numBatches++;
                 lastBatchId = numBatches;
+                String batchKey = entry.getKey();
+                List<String> batchLines = entry.getValue();
                 totalRecords += batchLines.size();
+
+                String batchStartTime = LocalDateTime.now().format(formatter);
+                int batchMalformed = 0;
+                int batchValid = 0;
 
                 for (String line : batchLines) {
                     ParsedLog parsed = LogParser.parse(line);
                     if (parsed == null) {
                         malformedCount++;
+                        batchMalformed++;
                     } else {
+                        batchValid++;
                         String safeHost = parsed.host.replace("\t", " ");
                         String safeResource = parsed.resourcePath.replace("\t", " ");
                         writer.write(safeHost + "\t" + parsed.timestamp + "\t" + parsed.logDate + "\t" +
@@ -68,8 +88,17 @@ public class MapReducePipeline {
                                 parsed.protocolVersion + "\t" + parsed.statusCode + "\t" + parsed.bytesTransferred + "\n");
                     }
                 }
-                if (numBatches % 50 == 0) {
-                    System.out.println("      Batch " + numBatches + ": " + batchLines.size() + " lines staged");
+
+                String batchEndTime = LocalDateTime.now().format(formatter);
+
+                // Record batch metadata
+                DatabaseManager.loadBatchMetadata(runId, pipelineName, numBatches, batchKey,
+                        strategy.getLabel(), batchLines.size(), batchValid,
+                        batchMalformed, batchStartTime, batchEndTime);
+
+                if (numBatches % 50 == 0 || strategy != BatchStrategy.FIXED) {
+                    System.out.printf("      Batch %d [%s]: %d lines (%d malformed)%n",
+                            numBatches, batchKey, batchLines.size(), batchMalformed);
                 }
             }
         } catch (Exception e) {
@@ -85,92 +114,107 @@ public class MapReducePipeline {
         try (Connection conn = DriverManager.getConnection("jdbc:mysql://" + Config.MYSQL_HOST + ":" + Config.MYSQL_PORT + "/" + Config.MYSQL_DATABASE, Config.MYSQL_USER, Config.MYSQL_PASSWORD)) {
             
             // ─── Query 1 ──────────────────────────────────────────────────
-            System.out.println("  ⏳ Running Query 1 (Hadoop MapReduce)...");
-            String outQ1 = "data/mr_output_q1";
-            runHadoopJob("q1", inputDir.getPath(), outQ1);
+            if (selectedQueries.contains("q1")) {
+                System.out.println("  ⏳ Running Query 1 (Hadoop MapReduce)...");
+                String outQ1 = "data/mr_output_q1";
+                runHadoopJob("q1", inputDir.getPath(), outQ1);
 
-            String sql1 = "INSERT INTO query1_results (pipeline_name, run_id, batch_id, execution_time, log_date, status_code, request_count, total_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement ps = conn.prepareStatement(sql1)) {
-                int rows = 0;
-                List<String> results = readHadoopOutput(outQ1);
-                for (String res : results) {
-                    String[] parts = res.split("\t");
-                    ps.setString(1, pipelineName);
-                    ps.setString(2, runId);
-                    ps.setInt(3, lastBatchId);
-                    ps.setString(4, execTime);
-                    ps.setString(5, parts[0]);
-                    ps.setInt(6, Integer.parseInt(parts[1]));
-                    ps.setInt(7, Integer.parseInt(parts[2]));
-                    ps.setLong(8, Long.parseLong(parts[3]));
-                    ps.addBatch();
-                    rows++;
+                String sql1 = "INSERT INTO query1_results (pipeline_name, run_id, batch_id, execution_time, log_date, status_code, request_count, total_bytes) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql1)) {
+                    int rows = 0;
+                    List<String> results = readHadoopOutput(outQ1);
+                    for (String res : results) {
+                        String[] parts = res.split("\t");
+                        ps.setString(1, pipelineName);
+                        ps.setString(2, runId);
+                        ps.setInt(3, lastBatchId);
+                        ps.setString(4, execTime);
+                        ps.setString(5, parts[0]);
+                        ps.setInt(6, Integer.parseInt(parts[1]));
+                        ps.setInt(7, Integer.parseInt(parts[2]));
+                        ps.setLong(8, Long.parseLong(parts[3]));
+                        ps.addBatch();
+                        rows++;
+                    }
+                    ps.executeBatch();
+                    System.out.println("      → " + rows + " rows loaded to MySQL");
                 }
-                ps.executeBatch();
-                System.out.println("      → " + rows + " rows loaded to MySQL");
+                deleteDirectory(new File(outQ1));
+            } else {
+                System.out.println("  ⏭  Skipping Query 1");
             }
 
             // ─── Query 2 ──────────────────────────────────────────────────
-            System.out.println("  ⏳ Running Query 2 (Hadoop MapReduce)...");
-            String outQ2 = "data/mr_output_q2";
-            runHadoopJob("q2", inputDir.getPath(), outQ2);
+            if (selectedQueries.contains("q2")) {
+                System.out.println("  ⏳ Running Query 2 (Hadoop MapReduce)...");
+                String outQ2 = "data/mr_output_q2";
+                runHadoopJob("q2", inputDir.getPath(), outQ2);
 
-            String sql2 = "INSERT INTO query2_results (pipeline_name, run_id, batch_id, execution_time, resource_path, request_count, total_bytes, distinct_host_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement ps = conn.prepareStatement(sql2)) {
-                int rows = 0;
-                List<String> results = readHadoopOutput(outQ2);
-                
-                // Sort by request count DESC to get Top 20 (Simulating 2nd MapReduce Job)
-                List<String[]> parsedResults = new ArrayList<>();
-                for (String res : results) {
-                    parsedResults.add(res.split("\t"));
-                }
-                parsedResults.sort((a, b) -> Integer.compare(Integer.parseInt(b[1]), Integer.parseInt(a[1])));
+                String sql2 = "INSERT INTO query2_results (pipeline_name, run_id, batch_id, execution_time, resource_path, request_count, total_bytes, distinct_host_count) VALUES (?, ?, ?, ?, ?, ?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql2)) {
+                    int rows = 0;
+                    List<String> results = readHadoopOutput(outQ2);
+                    
+                    // Sort by request count DESC to get Top 20 (Simulating 2nd MapReduce Job)
+                    List<String[]> parsedResults = new ArrayList<>();
+                    for (String res : results) {
+                        parsedResults.add(res.split("\t"));
+                    }
+                    parsedResults.sort((a, b) -> Integer.compare(Integer.parseInt(b[1]), Integer.parseInt(a[1])));
 
-                for (int i = 0; i < Math.min(20, parsedResults.size()); i++) {
-                    String[] parts = parsedResults.get(i);
-                    ps.setString(1, pipelineName);
-                    ps.setString(2, runId);
-                    ps.setInt(3, lastBatchId);
-                    ps.setString(4, execTime);
-                    String resource = parts[0];
-                    ps.setString(5, resource.length() > 512 ? resource.substring(0, 512) : resource);
-                    ps.setInt(6, Integer.parseInt(parts[1]));
-                    ps.setLong(7, Long.parseLong(parts[2]));
-                    ps.setInt(8, Integer.parseInt(parts[3]));
-                    ps.addBatch();
-                    rows++;
+                    for (int i = 0; i < Math.min(20, parsedResults.size()); i++) {
+                        String[] parts = parsedResults.get(i);
+                        ps.setString(1, pipelineName);
+                        ps.setString(2, runId);
+                        ps.setInt(3, lastBatchId);
+                        ps.setString(4, execTime);
+                        String resource = parts[0];
+                        ps.setString(5, resource.length() > 512 ? resource.substring(0, 512) : resource);
+                        ps.setInt(6, Integer.parseInt(parts[1]));
+                        ps.setLong(7, Long.parseLong(parts[2]));
+                        ps.setInt(8, Integer.parseInt(parts[3]));
+                        ps.addBatch();
+                        rows++;
+                    }
+                    ps.executeBatch();
+                    System.out.println("      → " + rows + " rows loaded to MySQL");
                 }
-                ps.executeBatch();
-                System.out.println("      → " + rows + " rows loaded to MySQL");
+                deleteDirectory(new File(outQ2));
+            } else {
+                System.out.println("  ⏭  Skipping Query 2");
             }
 
             // ─── Query 3 ──────────────────────────────────────────────────
-            System.out.println("  ⏳ Running Query 3 (Hadoop MapReduce)...");
-            String outQ3 = "data/mr_output_q3";
-            runHadoopJob("q3", inputDir.getPath(), outQ3);
+            if (selectedQueries.contains("q3")) {
+                System.out.println("  ⏳ Running Query 3 (Hadoop MapReduce)...");
+                String outQ3 = "data/mr_output_q3";
+                runHadoopJob("q3", inputDir.getPath(), outQ3);
 
-            String sql3 = "INSERT INTO query3_results (pipeline_name, run_id, batch_id, execution_time, log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
-            try (PreparedStatement ps = conn.prepareStatement(sql3)) {
-                int rows = 0;
-                List<String> results = readHadoopOutput(outQ3);
-                for (String res : results) {
-                    String[] parts = res.split("\t");
-                    ps.setString(1, pipelineName);
-                    ps.setString(2, runId);
-                    ps.setInt(3, lastBatchId);
-                    ps.setString(4, execTime);
-                    ps.setString(5, parts[0]);
-                    ps.setInt(6, Integer.parseInt(parts[1]));
-                    ps.setInt(7, Integer.parseInt(parts[2]));
-                    ps.setInt(8, Integer.parseInt(parts[3]));
-                    ps.setDouble(9, Double.parseDouble(parts[4]));
-                    ps.setInt(10, Integer.parseInt(parts[5]));
-                    ps.addBatch();
-                    rows++;
+                String sql3 = "INSERT INTO query3_results (pipeline_name, run_id, batch_id, execution_time, log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)";
+                try (PreparedStatement ps = conn.prepareStatement(sql3)) {
+                    int rows = 0;
+                    List<String> results = readHadoopOutput(outQ3);
+                    for (String res : results) {
+                        String[] parts = res.split("\t");
+                        ps.setString(1, pipelineName);
+                        ps.setString(2, runId);
+                        ps.setInt(3, lastBatchId);
+                        ps.setString(4, execTime);
+                        ps.setString(5, parts[0]);
+                        ps.setInt(6, Integer.parseInt(parts[1]));
+                        ps.setInt(7, Integer.parseInt(parts[2]));
+                        ps.setInt(8, Integer.parseInt(parts[3]));
+                        ps.setDouble(9, Double.parseDouble(parts[4]));
+                        ps.setInt(10, Integer.parseInt(parts[5]));
+                        ps.addBatch();
+                        rows++;
+                    }
+                    ps.executeBatch();
+                    System.out.println("      → " + rows + " rows loaded to MySQL");
                 }
-                ps.executeBatch();
-                System.out.println("      → " + rows + " rows loaded to MySQL");
+                deleteDirectory(new File(outQ3));
+            } else {
+                System.out.println("  ⏭  Skipping Query 3");
             }
 
         } catch (Exception e) {
@@ -180,19 +224,19 @@ public class MapReducePipeline {
 
         // Cleanup
         deleteDirectory(inputDir);
-        deleteDirectory(new File("data/mr_output_q1"));
-        deleteDirectory(new File("data/mr_output_q2"));
-        deleteDirectory(new File("data/mr_output_q3"));
 
         long endMillis = System.currentTimeMillis();
         String completedAt = LocalDateTime.now().format(formatter);
         float runtimeSeconds = (endMillis - startMillis) / 1000f;
         float avgBatchSize = numBatches > 0 ? (float) totalRecords / numBatches : 0;
 
-        DatabaseManager.loadRunMetadata(runId, pipelineName, batchSize, totalRecords, malformedCount, numBatches, avgBatchSize, runtimeSeconds, startedAt, completedAt);
+        DatabaseManager.loadRunMetadata(runId, pipelineName, strategy.getLabel(),
+                batchSize, totalRecords, malformedCount, numBatches, avgBatchSize,
+                runtimeSeconds, startedAt, completedAt);
 
         System.out.println("\n  ✅  Java MapReduce Pipeline Complete");
         System.out.println("      Runtime: " + runtimeSeconds + "s");
+        System.out.println("      Total Malformed Records: " + malformedCount);
 
         return runId;
     }
