@@ -3,8 +3,10 @@ package com.invincibleagam;
 import com.invincibleagam.core.BatchStrategy;
 import com.invincibleagam.core.Config;
 import com.invincibleagam.core.DatabaseManager;
+import com.invincibleagam.pipelines.HivePipeline;
 import com.invincibleagam.pipelines.MapReducePipeline;
 import com.invincibleagam.pipelines.MongoPipeline;
+import com.invincibleagam.pipelines.PigPipeline;
 
 import java.io.File;
 import java.util.*;
@@ -28,16 +30,18 @@ public class Main {
         }
 
         Scanner scanner = new Scanner(System.in);
-        System.out.println("\nSelect an action:");
-        System.out.println("  1. Run MongoDB Pipeline");
-        System.out.println("  2. Run MapReduce Pipeline (Hadoop native)");
-        System.out.println("  3. View Report for a Run");
-        System.out.println("  4. Run Both Pipelines & Correctness Check");
-        System.out.print("\nChoice [1-4]: ");
+        System.out.println("\nSelect a pipeline:");
+        System.out.println("  1. MongoDB Aggregation Pipeline");
+        System.out.println("  2. Hadoop MapReduce Pipeline");
+        System.out.println("  3. Apache Pig Pipeline");
+        System.out.println("  4. Apache Hive Pipeline");
+        System.out.println("  5. Run ALL 4 Pipelines + Correctness Check");
+        System.out.println("  6. View Report for a Run");
+        System.out.print("\nChoice [1-6]: ");
 
         String choice = scanner.nextLine().trim();
 
-        if (choice.equals("1") || choice.equals("2") || choice.equals("4")) {
+        if (choice.matches("[1-5]")) {
 
             // ── Batch Strategy ──────────────────────────────────────────
             System.out.println("\nBatch Strategy:");
@@ -92,43 +96,61 @@ public class Main {
                     if (q.equals("3")) selectedQueries.add("q3");
                 }
             }
-
             if (selectedQueries.isEmpty()) {
                 selectedQueries.addAll(Arrays.asList("q1", "q2", "q3"));
             }
 
             // ── Execute ─────────────────────────────────────────────────
-            if (choice.equals("4")) {
-                // Run both pipelines and then correctness check
-                System.out.println("\n  Running MongoDB Pipeline first...");
-                String mongoRunId = MongoPipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+            if (choice.equals("5")) {
+                // Run all 4 pipelines
+                List<String> runIds = new ArrayList<>();
+                String[] pipelineNames = {"MongoDB", "MapReduce", "Pig", "Hive"};
+                int idx = 0;
 
-                System.out.println("\n  Running MapReduce Pipeline second...");
-                String mrRunId = MapReducePipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                System.out.println("\n  ═══ Running all 4 pipelines sequentially ═══\n");
 
-                if (mongoRunId != null && mrRunId != null) {
-                    System.out.println("\nGenerating reports...");
-                    DatabaseManager.printReport(mongoRunId);
-                    DatabaseManager.printReport(mrRunId);
+                String mongoId = MongoPipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                if (mongoId != null) runIds.add(mongoId);
 
-                    // Correctness check
-                    DatabaseManager.runCorrectnessCheck(mongoRunId, mrRunId);
+                String mrId = MapReducePipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                if (mrId != null) runIds.add(mrId);
+
+                String pigId = PigPipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                if (pigId != null) runIds.add(pigId);
+
+                String hiveId = HivePipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                if (hiveId != null) runIds.add(hiveId);
+
+                // Print reports
+                System.out.println("\n  ═══ Reports ═══");
+                for (String rid : runIds) {
+                    DatabaseManager.printReport(rid);
+                }
+
+                // Pairwise correctness checks
+                if (runIds.size() >= 2) {
+                    System.out.println("\n  ═══ Pairwise Correctness Checks ═══");
+                    for (int i = 0; i < runIds.size(); i++) {
+                        for (int j = i + 1; j < runIds.size(); j++) {
+                            DatabaseManager.runCorrectnessCheck(runIds.get(i), runIds.get(j));
+                        }
+                    }
                 }
             } else {
                 String runId = null;
-                if (choice.equals("1")) {
-                    runId = MongoPipeline.runPipeline(files, batchSize, strategy, selectedQueries);
-                } else {
-                    runId = MapReducePipeline.runPipeline(files, batchSize, strategy, selectedQueries);
+                switch (choice) {
+                    case "1": runId = MongoPipeline.runPipeline(files, batchSize, strategy, selectedQueries); break;
+                    case "2": runId = MapReducePipeline.runPipeline(files, batchSize, strategy, selectedQueries); break;
+                    case "3": runId = PigPipeline.runPipeline(files, batchSize, strategy, selectedQueries); break;
+                    case "4": runId = HivePipeline.runPipeline(files, batchSize, strategy, selectedQueries); break;
                 }
-
                 if (runId != null) {
                     System.out.println("\nGenerating report...");
                     DatabaseManager.printReport(runId);
                 }
             }
 
-        } else if (choice.equals("3")) {
+        } else if (choice.equals("6")) {
             System.out.print("Enter Run ID: ");
             String runId = scanner.nextLine().trim();
             DatabaseManager.printReport(runId);

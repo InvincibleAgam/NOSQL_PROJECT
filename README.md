@@ -1,89 +1,99 @@
-# NASA HTTP Log Analysis — Phase 1 (Java Migration Complete)
+# NASA HTTP Log Analysis — NoSQL Systems End-Term Project
 
-This repository contains the Phase 1 deliverables for the DAS 839 NoSQL Systems End-Term Project. The entire architecture has been migrated to a pure **Java Maven Project**.
+This repository contains the complete deliverables for the **DAS 839 NoSQL Systems End-Term Project**. The system implements a unified **Java CLI tool** that supports **all 4 required execution pipelines**: MongoDB, MapReduce, Pig, and Hive.
 
-## Overview
-Phase 1 focuses on designing the overall system architecture, defining the shared parsing and ETL workflows, building the reporting schema, and demonstrating a working prototype using two pipelines natively in Java:
-1. **MongoDB Pipeline** (using Java MongoDB Driver Sync)
-2. **MapReduce Pipeline** (using native Hadoop Java API)
-
-Both pipelines process two months of NASA HTTP access logs (July & August 1995, ~3.46M records) and produce mathematically identical results for the three mandatory queries.
+All pipelines process two months of NASA HTTP access logs (July & August 1995, ~3.46M records) and produce mathematically identical results for the three mandatory queries.
 
 ## 1. System Architecture
-
-The system uses a unified Java controller (`Main.java`) that routes execution to specific database pipelines while utilizing shared Java parsers, batching streams, and reporting components.
 
 ```
 ┌─────────────────────────────────────────────────┐
 │              Java CLI Controller                 │
 │         (Main.java — pipeline selector)          │
-└──────────┬───────────────┬──────────────────────┘
-           │               │
-     ┌─────▼─────┐   ┌────▼──────┐   ┌──────────┐  ┌──────────┐
-     │  MongoDB   │   │ MapReduce │   │   Pig    │  │   Hive   │
-     │  Pipeline  │   │ Pipeline  │   │(Phase 2) │  │(Phase 2) │
-     └─────┬──────┘   └────┬──────┘   └──────────┘  └──────────┘
-           │               │
-     ┌─────▼───────────────▼──────┐
-     │     Shared Parser Module    │
-     │  (LogParser.java — regex)   │
-     └─────────────┬──────────────┘
-                   │
-     ┌─────────────▼──────────────┐
-     │    MySQL JDBC Loader        │
-     │(DatabaseManager.java)       │
-     └─────────────┬──────────────┘
-                   │
-     ┌─────────────▼──────────────┐
-     │    Reporting Module         │
-     │(DatabaseManager.java)       │
-     └────────────────────────────┘
+└──┬────────┬────────┬────────┬───────────────────┘
+   │        │        │        │
+┌──▼──┐  ┌──▼──┐  ┌──▼──┐  ┌──▼──┐
+│Mongo│  │ MR  │  │ Pig │  │Hive │
+│Pipe │  │Pipe │  │Pipe │  │Pipe │
+└──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
+   │        │        │        │
+   └────────┴───┬────┴────────┘
+                │
+   ┌────────────▼────────────┐
+   │   Shared Parser Module   │
+   │  (LogParser.java — regex)│
+   └────────────┬────────────┘
+                │
+   ┌────────────▼────────────┐
+   │ LogicalBatchProcessor    │
+   │ (fixed / monthly / weekly)│
+   └────────────┬────────────┘
+                │
+   ┌────────────▼────────────┐
+   │   MySQL JDBC Loader +    │
+   │   Reporting Module       │
+   │  (DatabaseManager.java)  │
+   └─────────────────────────┘
 ```
 
-## 2. Parsing Strategy
+## 2. Pipelines
 
-The shared parsing logic is located in `LogParser.java`. It uses a rigorous `java.util.regex` pattern:
-`^(\S+)\s+\S+\s+\S+\s+\[([^\]]+)\]\s+"([^"]*)"\s+(\d{3})\s+(\S+)$`
+| Pipeline | Execution Technology | Core Processing |
+|----------|---------------------|-----------------|
+| **MongoDB** | MongoDB Aggregation Framework (`$group`, `$sort`, `$limit`) | Java MongoDB Driver Sync |
+| **MapReduce** | Native Hadoop MapReduce (Mapper/Reducer classes) | `hadoop jar` CLI |
+| **Pig** | Apache Pig Latin scripts (`GROUP BY`, `FOREACH`, `DISTINCT`) | `pig -x local -f` CLI |
+| **Hive** | HiveQL queries (`GROUP BY`, `COUNT`, `SUM`, `CASE WHEN`) | `hive -f` CLI |
 
-This extracts all required fields. `bytes_transferred` is explicitly checked for `-` and defaulted to `0`.
+All pipelines share:
+- **Parser**: `LogParser.java` (identical regex for all)
+- **Batching**: `LogicalBatchProcessor.java` (fixed / monthly / weekly)
+- **MySQL Loading**: `DatabaseManager.java` (JDBC)
 
-**Malformed Records**: 
-If a line fails to match the strict regex format, or if its timestamp cannot be parsed, the parser intentionally returns `null`. The orchestrating pipelines increment a `malformed_count` tracker, ensuring no data is silently dropped. In our run over 3,461,613 records, exactly **33 lines** were flagged as malformed.
+## 3. Mandatory Queries
 
-## 3. ETL Workflow
+| Query | Description | Output Columns |
+|-------|-------------|----------------|
+| Q1 | Daily Traffic Summary | `log_date, status_code, request_count, total_bytes` |
+| Q2 | Top 20 Requested Resources | `resource_path, request_count, total_bytes, distinct_host_count` |
+| Q3 | Hourly Error Analysis | `log_date, log_hour, error_request_count, total_request_count, error_rate, distinct_error_hosts` |
 
-1. **Extract**: `BatchProcessor.java` streams log files, natively decoding GZIP and yielding log lines to the chosen pipeline.
-2. **Transform**: The data is parsed via the unified Java parser into POJOs.
-3. **Aggregate**: The chosen pipeline (MongoDB/MapReduce) computes the three queries.
-4. **Load**: `DatabaseManager.java` writes the aggregated results and pipeline metadata to the shared MySQL database via JDBC.
+## 4. Batching Strategy
 
-## 4. Batching Approach
+Users can choose between three batching strategies at runtime:
+- **Fixed**: Traditional N-records-per-batch (default 10,000)
+- **Monthly**: Group by calendar month (e.g., all July 1995 records)
+- **Weekly**: Group by ISO week number
 
-Batches are streamed dynamically using a custom Java Iterator (`BatchProcessor`) without loading the entire dataset into memory. 
-- The default batch size is **10,000**.
-- Batch sizes, batch count, and average batch size (`total_records / num_batches`) are computed at the end of the run and saved to the `run_metadata` table.
+Batch metadata is stored in a dedicated `batch_metadata` table.
 
-## 5. Relational Reporting Database Schema
+## 5. Database Schema
 
-The results are stored in MySQL across four tables:
-- `query1_results`: `log_date`, `status_code`, `request_count`, `total_bytes`
-- `query2_results`: `resource_path`, `request_count`, `total_bytes`, `distinct_host_count`
-- `query3_results`: `log_date`, `log_hour`, `error_request_count`, `total_request_count`, `error_rate`, `distinct_error_hosts`
-- `run_metadata`: Tracking run-level stats across pipelines.
+Results are stored in MySQL across these tables:
+- `query1_results`, `query2_results`, `query3_results` — per-query result tables
+- `run_metadata` — per-run statistics (pipeline, runtime, batch info, malformed count)
+- `batch_metadata` — per-batch details (key, strategy, valid/malformed counts)
 
-## 6. Pipeline Equivalence Plan
+## 6. Correctness Check
 
-Equivalence is strictly enforced through standardizing all transformations BEFORE the data hits the database engines:
-1. **Shared Parser**: Both MongoDB and MapReduce use the exact same `LogParser.java`.
-2. **Execution Technology**: The MapReduce pipeline uses native Java (`NASALogDriver.java`) executed via Hadoop, guaranteeing the core data processing happens genuinely in Hadoop.
-3. **Verification**: A strict comparison between the output logs generated by both pipelines over 3.46 Million rows yields 100% equivalence down to the byte.
+The tool includes a built-in **pairwise correctness checker** (option 5 in the CLI) that:
+1. Runs all 4 pipelines sequentially with the same batch settings
+2. Compares every query result row-by-row across all 6 pairs
+3. Reports `✅ MATCH` or `❌ MISMATCH` for each pair
 
-## Running the Demo
+## 7. Running the Project
 
-Make sure Docker is running (for MySQL on 3307 and MongoDB on 27017).
+### Prerequisites
+- Java 17+, Maven
+- MySQL (port 3307) and MongoDB (port 27017)
+- Hadoop (for MapReduce pipeline)
+- Apache Pig (for Pig pipeline): `brew install pig`
+- Apache Hive (for Hive pipeline): `brew install hive`
+
+### Commands
 
 ```bash
-# 1. Download NASA dataset (if not already downloaded)
+# 1. Download NASA dataset
 bash scripts/download_data.sh
 
 # 2. Build the Maven Project
@@ -91,4 +101,15 @@ mvn clean package
 
 # 3. Run the interactive Java CLI
 java -cp target/nosql-project-1.0-SNAPSHOT-jar-with-dependencies.jar com.invincibleagam.Main
+```
+
+### CLI Flow
+```
+Select a pipeline:
+  1. MongoDB Aggregation Pipeline
+  2. Hadoop MapReduce Pipeline
+  3. Apache Pig Pipeline
+  4. Apache Hive Pipeline
+  5. Run ALL 4 Pipelines + Correctness Check
+  6. View Report for a Run
 ```
