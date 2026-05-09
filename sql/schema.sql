@@ -62,6 +62,7 @@ CREATE TABLE IF NOT EXISTS run_metadata (
     id                INT AUTO_INCREMENT PRIMARY KEY,
     run_id            VARCHAR(50)   NOT NULL UNIQUE,
     pipeline_name     VARCHAR(20)   NOT NULL,
+    batch_strategy    VARCHAR(20)   NOT NULL DEFAULT 'fixed',
     batch_size        INT           NOT NULL,
     total_records     INT           NOT NULL,
     malformed_records INT           NOT NULL,
@@ -70,4 +71,23 @@ CREATE TABLE IF NOT EXISTS run_metadata (
     runtime_seconds   DECIMAL(10,3) NOT NULL,
     started_at        DATETIME      NOT NULL,
     completed_at      DATETIME      NOT NULL
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- ── Batch Metadata Table (NEW) ─────────────────────────────
+-- Stores per-batch details: records processed, malformed count,
+-- batch key (e.g. "1995-07" for monthly, "1995-W27" for weekly, "batch_42" for fixed)
+CREATE TABLE IF NOT EXISTS batch_metadata (
+    id                  INT AUTO_INCREMENT PRIMARY KEY,
+    run_id              VARCHAR(50)   NOT NULL,
+    pipeline_name       VARCHAR(20)   NOT NULL,
+    batch_sequence      INT           NOT NULL,
+    batch_key           VARCHAR(50)   NOT NULL,
+    batch_strategy      VARCHAR(20)   NOT NULL DEFAULT 'fixed',
+    total_records       INT           NOT NULL,
+    valid_records       INT           NOT NULL,
+    malformed_records   INT           NOT NULL,
+    started_at          DATETIME      NOT NULL,
+    completed_at        DATETIME      NOT NULL,
+    INDEX idx_bm_run    (run_id),
+    INDEX idx_bm_pipe   (pipeline_name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
