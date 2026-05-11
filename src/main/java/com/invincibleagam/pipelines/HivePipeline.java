@@ -120,13 +120,16 @@ public class HivePipeline {
 
     private static void runHiveScript(String script, String inputDir, String outputDir) throws Exception {
         List<String> cmd = new ArrayList<>();
-        cmd.add("hive");
+        cmd.add("beeline");
+        cmd.add("-u"); cmd.add("jdbc:hive2://");
         cmd.add("--hivevar"); cmd.add("INPUT_DIR=" + inputDir);
         if (outputDir != null) { cmd.add("--hivevar"); cmd.add("OUTPUT_DIR=" + outputDir); }
         cmd.add("-f"); cmd.add(new File(script).getAbsolutePath());
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
-        pb.environment().put("HADOOP_CLIENT_OPTS", "-Dhadoop.service.shutdown.timeout=120000");
+        // -Dorg.jline.terminal.provider=dumb works around Hive 4.2 beeline's JLine JNA crash on macOS arm64
+        pb.environment().put("HADOOP_CLIENT_OPTS",
+                "-Dhadoop.service.shutdown.timeout=120000 -Dorg.jline.terminal.provider=dumb");
         pb.environment().put("HIVE_CONF_DIR", System.getProperty("user.dir"));
         pb.inheritIO();
         int exit = pb.start().waitFor();
