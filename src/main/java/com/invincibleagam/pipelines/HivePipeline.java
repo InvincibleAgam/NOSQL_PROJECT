@@ -126,6 +126,7 @@ public class HivePipeline {
         cmd.add("-f"); cmd.add(new File(script).getAbsolutePath());
 
         ProcessBuilder pb = new ProcessBuilder(cmd);
+        pb.environment().put("HADOOP_CLIENT_OPTS", "-Dhadoop.service.shutdown.timeout=120000");
         pb.inheritIO();
         int exit = pb.start().waitFor();
         if (exit != 0) throw new Exception("Hive failed (exit " + exit + "): " + script);
