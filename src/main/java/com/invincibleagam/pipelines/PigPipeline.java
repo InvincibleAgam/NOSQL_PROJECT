@@ -114,6 +114,10 @@ public class PigPipeline {
     private static void runPigScript(String script, String input, String output) throws Exception {
         ProcessBuilder pb = new ProcessBuilder("pig", "-x", "local", "-f",
                 new File(script).getAbsolutePath(), "-param", "INPUT=" + input, "-param", "OUTPUT=" + output);
+        // Add uber JAR to PIG_CLASSPATH to provide commons-collections (CircularFifoBuffer)
+        String uberJar = new File("target/nosql-project-1.0-SNAPSHOT-jar-with-dependencies.jar").getAbsolutePath();
+        String existing = pb.environment().getOrDefault("PIG_CLASSPATH", "");
+        pb.environment().put("PIG_CLASSPATH", existing.isEmpty() ? uberJar : existing + ":" + uberJar);
         pb.inheritIO();
         int exit = pb.start().waitFor();
         if (exit != 0) throw new Exception("Pig failed (exit " + exit + "): " + script);
