@@ -1,0 +1,7 @@
+Pig and Hive are installed. Run these two commands now:
+
+    mvn clean package
+
+    java -cp target/nosql-project-1.0-SNAPSHOT-jar-with-dependencies.jar com.invincibleagam.Main
+
+When menu appears type: 5 then 1 then press Enter then a

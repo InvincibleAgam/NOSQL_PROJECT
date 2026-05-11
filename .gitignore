@@ -12,6 +12,12 @@ __pycache__/
 *.class
 *.jar
 
+# Maven build output
+target/
+
+# Hive embedded Derby metastore state
+metastore_db/
+
 # OS generated files
 .DS_Store
 .DS_Store?
